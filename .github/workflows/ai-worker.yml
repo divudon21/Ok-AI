@@ -1,0 +1,41 @@
+name: AI Code Orchestrator
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  ai-logic:
+    runs-on: ubuntu-latest
+    # Agar issue ka title "AI:" se start hota hai tabhi ye chalega (Optional filter)
+    if: contains(github.event.issue.title, 'AI:') 
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyGithub requests
+
+      - name: Run AI Agent
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: python scripts/ai_logic.py
+        
