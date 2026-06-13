@@ -67,3 +67,36 @@ COPY . $HOME/app
 
 # Fixed for Render: Binding dynamically to Render assigned network port to prevent request routing errors
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-7860}"]
+
+# Android Command Line Tools setup
+RUN mkdir -p $ANDROID_HOME/cmdline-tools \
+    && curl -L -o /tmp/cmdline.zip https://${A_HOST}/${A_PATH}/${A_FILE} \
+    && unzip -q /tmp/cmdline.zip -d $ANDROID_HOME/cmdline-tools \
+    && mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest \
+    && rm /tmp/cmdline.zip
+
+# Non-interactive licenses accept karein
+RUN yes | sdkmanager --licenses
+
+# Android SDK Platforms aur Build Tools pehle se load kar rahe hain
+RUN sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+# Pre-install global standalone Gradle binaries inside sandbox to enable local wrapper instantiation
+RUN mkdir -p /opt/gradle \
+    && curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-7.5.1-bin.zip \
+    && unzip -q /tmp/gradle.zip -d /opt/gradle \
+    && rm /tmp/gradle.zip
+ENV PATH=$PATH:/opt/gradle/gradle-7.5.1/bin
+
+# Permissions 777 root core systems ke liye
+RUN chmod -R 777 /opt
+
+WORKDIR $HOME/app
+
+COPY requirements.txt $HOME/app/requirements.txt
+RUN pip install --no-cache-dir --upgrade -r $HOME/app/requirements.txt
+
+COPY . $HOME/app
+
+# Fixed for Render: Binding dynamically to Render assigned network port to prevent request routing errors
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-7860}"]
