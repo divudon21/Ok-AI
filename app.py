@@ -17,10 +17,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# NVIDIA NIM initialization with your latest shared key
+# Secure Setup: Token key ab Render ke env variables se safely fetch hogi
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
+    api_key=NVIDIA_API_KEY
 )
 
 class ChatRequest(BaseModel):
