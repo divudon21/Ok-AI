@@ -1,39 +1,144 @@
-FROM python:3.10-slim
+import os
+import subprocess
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
 
-# Force system to run as root explicitly
-USER root
-ENV HOME=/root
+app = FastAPI()
 
-# Basic tools download karein
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    unzip \
-    xz-utils \
-    zip \
-    sudo \
-    && rm -rf /var/lib/apt/lists/*
+# CORS Configurations - Saari settings pehle jaisi safe hain
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# URL ko puri tarah obfuscate kar diya taaki web parser ise link na banaye
-ENV J_HOST=download.java.net
-ENV J_PATH=java/GA/jdk17.0.2/dfd4a8d0985749f896bed50d7138ee7f/8/GPL
-ENV J_FILE=openjdk-17.0.2_linux-x64_bin.tar.gz
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Android Repo Obfuscation
-ENV A_HOST=dl.google.com
-ENV A_PATH=android/repository
-ENV A_FILE=commandlinetools-linux-11076708_latest.zip
+class ChatRequest(BaseModel):
+    message: str
 
-# Production-ready OpenJDK 17 Linux x64 Binary download aur extract karein
-RUN mkdir -p /opt/java \
-    && curl -L -o /tmp/openjdk.tar.gz https://${J_HOST}/${J_PATH}/${J_FILE} \
-    && tar -xf /tmp/openjdk.tar.gz -C /opt/java --strip-components=1 \
-    && rm /tmp/openjdk.tar.gz
+# TOOL: Hardcore Terminal Execution System (Root Permission)
+def run_terminal_command(command: str) -> str:
+    """
+    Executes any bash command inside the secure Linux sandbox workspace (/tmp).
+    Use this to run python scripts, compile native Android projects, build APKs, or manage git operations (like git worktree).
+    """
+    try:
+        full_command = f"cd /tmp && {command}"
+        env = os.environ.copy()
+        
+        result = subprocess.run(
+            full_command, 
+            shell=True, 
+            capture_output=True, 
+            text=True, 
+            errors="replace",
+            timeout=300,
+            env=env
+        )
+        
+        output = f"Exit Code: {result.returncode}\n"
+        if result.stdout:
+            output += f"STDOUT:\n{result.stdout}\n"
+        if result.stderr:
+            output += f"STDERR:\n{result.stderr}\n"
+        return output
+    except subprocess.TimeoutExpired:
+        return "ERROR: Command execution timed out after 5 minutes to prevent server freeze."
+    except Exception as e:
+        return f"SYSTEM ERROR: {str(e)}"
 
-# Environment variables set karein taaki Java aur Android globally accessible ho
-ENV JAVA_HOME=/opt/java
-ENV ANDROID_HOME=/opt/android-sdk
-ENV PATH=$PATH:$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/34.0.0
+@app.post("/chat")
+async def agent_chat(request: ChatRequest):
+    user_prompt = request.message
+    
+    system_instruction = (
+        "You are an expert AI Agent Builder operating inside a fully equipped Linux sandbox.\n\n"
+        "YOUR DEVELOPMENT ENVIRONMENT capabilities:\n"
+        "- **Python 3** is installed. You can write and execute python scripts (`python3 script.py`).\n"
+        "- **Android Native Build System** is pre-installed. Full OpenJDK 17, Android SDK (API 34), and Build-Tools (34.0.0) are ready. You can create Native Android apps and build them directly.\n"
+        "- **HOP-AI SDK** is pre-installed. You can use 'import hop' in your python scripts to interact with remote cloud volumes, manage infrastructure, or offload long-running tasks if necessary.\n"
+        "- You are operating with full administrative permissions inside the `/tmp` directory.\n\n"
+        "YOUR AVAILABLE TOOLS:\n"
+        "- `run_terminal_command`: Call this tool to run any shell/bash script or build commands. Do NOT wrap shell code in text-based markdown blocks if you intend to run it; execute it directly via this tool.\n"
+        "- `Google Search`: You have native access to live Google Search. Use it automatically whenever you need to look up documentation for APIs (like catbox.moe, gofile.io, transfer.sh), research web endpoints, check dependency updates, or debug compilation errors.\n\n"
+        "CRITICAL APPLICATION GENERATION RULES:\n"
+        "- The workspace sandbox is initially empty. There are no pre-existing Android templates inside `/tmp`. If you are tasked to create an app, you MUST programmatically write and create every single source directory, file structure, configuration script, layout resource, and source file entirely from scratch.\n"
+        "- To initialize Gradle wrappers for native builds, you can programmatically inject the wrapper download URL inside 'gradle/wrapper/gradle-wrapper.properties' or download the wrapper binaries explicitly during the build step using curl/wget directly into the project folder.\n"
+        "- Always use standard POSIX compatible shell scripting loops (e.g., `for i in 1 2 3; do ... done`) instead of advanced bash-specific loops like `for ((i=0; i<3; i++))` because the sandbox default runtime shell executor is `/bin/sh`.\n\n"
+        "ADVANCED GIT WORKSPACE MANAGEMENT:\n"
+        "- You are encouraged to use `git worktree` when managing parallel tasks, feature implementations, or isolated testing branches. Instead of risky checkout switching or stashing uncommitted modifications, utilize `git worktree add -b <branch-name> <path>` to spin up isolated, standalone directories inside `/tmp` for separate branches. This keeps the main codebase safe and unpolluted during builds.\n\n"
+        "CRITICAL EXECUTION RULES:\n"
+        "- Analyze tool execution outputs carefully. If a command or build script fails, analyze the error log, use Google Search to find a solution or documentation if needed, self-correct, update your code, and execute again until successful.\n"
+        "- Once the objective is completed successfully (e.g., app compiled or file uploaded), present a clean summary and direct download links to the user."
+    )
+    
+    try:
+        # Custom functional tools mapping
+        custom_tools = {
+            "run_terminal_command": run_terminal_command
+        }
+        
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            tools=[run_terminal_command, {'google_search': {}}],
+            temperature=0.2
+        )
+        
+        chat = client.chats.create(model='gemini-2.0-flash', config=config)
+        response = chat.send_message(user_prompt)
+        
+        max_turns = 6 
+        current_turn = 0
+        execution_history = []
+        
+        # AGENT EXECUTION LOOP
+        while response.function_calls and current_turn < max_turns:
+            function_responses = []
+            
+            for function_call in response.function_calls:
+                name = function_call.name
+                args = function_call.args
+                call_id = function_call.id
+                
+                if name in custom_tools:
+                    tool_output = custom_tools[name](**args)
+                    
+                    execution_history.append({
+                        "turn": current_turn + 1,
+                        "tool_called": name,
+                        "arguments": args,
+                        "raw_output": tool_output
+                    })
+                    
+                    function_responses.append(
+                        types.Part.from_function_response(
+                            name=name,
+                            response={"result": tool_output},
+                            id=call_id
+                        )
+                    )
+            
+            if function_responses:
+                response = chat.send_message(function_responses)
+            else:
+                break
+                
+            current_turn += 1
+            
+        return {
+            "agent_response": response.text,
+            "execution_history": execution_history if execution_history else None
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Android Command Line Tools setup
 RUN mkdir -p $ANDROID_HOME/cmdline-tools \
