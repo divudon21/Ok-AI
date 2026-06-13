@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Secure Environment Initialization
+# Secure Environment Initialization - Render ke variables se uthayega
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
@@ -141,11 +141,6 @@ async def agent_chat(request: ChatRequest):
                 
                 delta = chunk.choices[0].delta
                 
-                # Check for model thinking content streaming if available
-                reasoning = getattr(delta, "reasoning_content", None)
-                if reasoning:
-                    pass # Internal stream processing safely bypassed from output dump
-                
                 # Reconstruct normal text content chunks
                 if delta.content is not None:
                     full_response_content += delta.content
@@ -222,3 +217,4 @@ async def agent_chat(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+        
