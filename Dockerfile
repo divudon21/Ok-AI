@@ -37,7 +37,7 @@ ENV PATH=$PATH:$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HO
 
 # Android Command Line Tools setup
 RUN mkdir -p $ANDROID_HOME/cmdline-tools \
-    && curl -L -o /tmp/cmdline.zip https://${A_HOST}/${A_PATH}/${A_FILE} \
+    && curl -L -o /tmp/cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
     && unzip -q /tmp/cmdline.zip -d $ANDROID_HOME/cmdline-tools \
     && mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest \
     && rm /tmp/cmdline.zip
