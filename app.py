@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Secure Setup: Token key ab Render ke env variables se safely fetch hogi
+# Secure Environment Initialization
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
@@ -84,7 +84,7 @@ async def agent_chat(request: ChatRequest):
     )
     
     try:
-        # Structured tool schema configuration
+        # Structured tool schema definition for unified NIM deployment
         tools_schema = [
             {
                 "type": "function",
@@ -114,7 +114,7 @@ async def agent_chat(request: ChatRequest):
         current_turn = 0
         execution_history = []
         
-        # AGENT EXECUTION LOOP - Powering Nemotron-3 deep reasoning and dynamic function triggers
+        # AGENT EXECUTION LOOP - Multi-turn tool tracking synced with Nemotron stream blocks
         while current_turn < max_turns:
             completion = client.chat.completions.create(
                 model="nvidia/nemotron-3-ultra-550b-a55b",
@@ -127,21 +127,74 @@ async def agent_chat(request: ChatRequest):
                 extra_body={
                     "chat_template_kwargs": {"enable_thinking": True},
                     "reasoning_budget": 16384
-                }
+                },
+                stream=True
             )
             
-            response_message = completion.choices[0].message
-            tool_calls = response_message.tool_calls
+            # Streaming reconstruction logic
+            full_response_content = ""
+            active_tool_calls_buffer = {}
             
-            if not tool_calls:
-                messages.append({"role": "assistant", "content": response_message.content})
+            for chunk in completion:
+                if not chunk.choices:
+                    continue
+                
+                delta = chunk.choices[0].delta
+                
+                # Check for model thinking content streaming if available
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    pass # Internal stream processing safely bypassed from output dump
+                
+                # Reconstruct normal text content chunks
+                if delta.content is not None:
+                    full_response_content += delta.content
+                
+                # Reconstruct streamed tool calls arguments chunks
+                if getattr(delta, "tool_calls", None):
+                    for tool_call_delta in delta.tool_calls:
+                        index = tool_call_delta.index
+                        if index not in active_tool_calls_buffer:
+                            active_tool_calls_buffer[index] = {
+                                "id": tool_call_delta.id,
+                                "name": tool_call_delta.function.name if getattr(tool_call_delta, "function", None) and tool_call_delta.function.name else "",
+                                "arguments": ""
+                            }
+                        if tool_call_delta.id:
+                            active_tool_calls_buffer[index]["id"] = tool_call_delta.id
+                        if tool_call_delta.function and tool_call_delta.function.name:
+                            active_tool_calls_buffer[index]["name"] = tool_call_delta.function.name
+                        if tool_call_delta.function and tool_call_delta.function.arguments:
+                            active_tool_calls_buffer[index]["arguments"] += tool_call_delta.function.arguments
+
+            # If no tool chunks were generated, break loop and save textual payload
+            if not active_tool_calls_buffer:
+                messages.append({"role": "assistant", "content": full_response_content})
                 break
                 
-            messages.append(response_message)
+            # Formulate structured payload for tool submission trace
+            formatted_tool_calls = []
+            for idx, call_data in active_tool_calls_buffer.items():
+                formatted_tool_calls.append({
+                    "id": call_data["id"],
+                    "type": "function",
+                    "function": {
+                        "name": call_data["name"],
+                        "arguments": call_data["arguments"]
+                    }
+                })
             
-            for tool_call in tool_calls:
-                if tool_call.function.name == "run_terminal_command":
-                    args = json.loads(tool_call.function.arguments)
+            # Append context history frame
+            messages.append({
+                "role": "assistant",
+                "content": full_response_content if full_response_content else None,
+                "tool_calls": formatted_tool_calls
+            })
+            
+            # Execute extracted tools inside loop sequentially
+            for call_data in active_tool_calls_buffer.values():
+                if call_data["name"] == "run_terminal_command":
+                    args = json.loads(call_data["arguments"])
                     cmd = args.get("command")
                     
                     tool_output = run_terminal_command(cmd)
@@ -155,7 +208,7 @@ async def agent_chat(request: ChatRequest):
                     
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": call_data["id"],
                         "name": "run_terminal_command",
                         "content": tool_output
                     })
